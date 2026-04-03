@@ -110,14 +110,19 @@ const apiKeyLabelEl = $("apiKeyLabel");
 const baseUrlRowEl = $("baseUrlRow");
 const baseUrlLabelEl = $("baseUrlLabel");
 const baseUrlEl = $("baseUrl");
+const thinkingIndicatorEl = $("thinkingIndicator");
 const modelEl = $("model");
-const providerEl = $("provider");
+const providerEls = document.querySelectorAll('input[name="provider"]');
 const ifcFileEl = $("ifcFile");
 const newBtn = $("newModel");
 const downloadBtn = $("downloadIfc");
 
+function getProviderValue() {
+    return document.querySelector('input[name="provider"]:checked')?.value || "openai";
+}
+
 function onProviderChange() {
-    const provider = PROVIDERS[providerEl.value];
+    const provider = PROVIDERS[getProviderValue()];
     apiKeyLabelEl.innerHTML = `${provider.apiKeyLabel}<span class="small">stored in browser memory; only sent to provider servers</span>`;
     apiKeyEl.placeholder = provider.apiKeyPlaceholder;
     baseUrlRowEl.hidden = !provider.baseUrlDefault;
@@ -132,7 +137,9 @@ function onProviderChange() {
     modelEl.innerHTML = provider.models.map(m => `<option value="${m.value}">${m.label}</option>`).join("");
 }
 
-providerEl.addEventListener("change", onProviderChange);
+for (const providerEl of providerEls) {
+    providerEl.addEventListener("change", onProviderChange);
+}
 onProviderChange();
 
 function setBusy(isBusy, reason = "") {
@@ -161,9 +168,177 @@ function setBusy(isBusy, reason = "") {
     setStatus(isBusy ? (reason || "Working…") : "Ready");
 }
 
+function escapeHtml(text) {
+    return text
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+}
+
+function sanitizeUrl(url) {
+    try {
+        const parsed = new URL(url, window.location.href);
+        if (["http:", "https:", "mailto:"].includes(parsed.protocol)) {
+            return parsed.href;
+        }
+    } catch {
+    }
+    return null;
+}
+
+function renderInlineMarkdown(text) {
+    const placeholders = [];
+    const addPlaceholder = (html) => {
+        const token = `@@MD${placeholders.length}@@`;
+        placeholders.push({ token, html });
+        return token;
+    };
+
+    let rendered = text;
+
+    rendered = rendered.replace(/`([^`]+)`/g, (_, code) => addPlaceholder(`<code>${escapeHtml(code)}</code>`));
+    rendered = rendered.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_, label, url) => {
+        const href = sanitizeUrl(url);
+        if (!href) {
+            return `${label} (${url})`;
+        }
+        return addPlaceholder(
+            `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer noopener">${escapeHtml(label)}</a>`
+        );
+    });
+
+    rendered = escapeHtml(rendered);
+    rendered = rendered.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    rendered = rendered.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+    rendered = rendered.replace(/_([^_]+)_/g, "<em>$1</em>");
+
+    for (const placeholder of placeholders) {
+        rendered = rendered.replaceAll(placeholder.token, placeholder.html);
+    }
+
+    return rendered;
+}
+
+function renderMarkdown(text) {
+    const lines = String(text).replace(/\r\n?/g, "\n").split("\n");
+    const html = [];
+    let paragraphLines = [];
+    let quoteLines = [];
+    let listType = null;
+    let listItems = [];
+
+    const flushParagraph = () => {
+        if (!paragraphLines.length) return;
+        html.push(`<p>${renderInlineMarkdown(paragraphLines.join(" "))}</p>`);
+        paragraphLines = [];
+    };
+
+    const flushQuote = () => {
+        if (!quoteLines.length) return;
+        const quoteBody = quoteLines.map((line) => renderInlineMarkdown(line)).join("<br />");
+        html.push(`<blockquote><p>${quoteBody}</p></blockquote>`);
+        quoteLines = [];
+    };
+
+    const flushList = () => {
+        if (!listItems.length || !listType) return;
+        const items = listItems.map((item) => `<li>${renderInlineMarkdown(item)}</li>`).join("");
+        html.push(`<${listType}>${items}</${listType}>`);
+        listType = null;
+        listItems = [];
+    };
+
+    const flushAll = () => {
+        flushParagraph();
+        flushQuote();
+        flushList();
+    };
+
+    for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        const trimmed = line.trim();
+
+        if (trimmed.startsWith("```")) {
+            flushAll();
+            const language = trimmed.slice(3).trim();
+            const codeLines = [];
+            index += 1;
+            while (index < lines.length && !lines[index].trim().startsWith("```")) {
+                codeLines.push(lines[index]);
+                index += 1;
+            }
+            const languageClass = language ? ` class="language-${escapeHtml(language)}"` : "";
+            html.push(`<pre><code${languageClass}>${escapeHtml(codeLines.join("\n"))}</code></pre>`);
+            continue;
+        }
+
+        if (!trimmed) {
+            flushAll();
+            continue;
+        }
+
+        const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+        if (headingMatch) {
+            flushAll();
+            const level = headingMatch[1].length;
+            html.push(`<h${level}>${renderInlineMarkdown(headingMatch[2])}</h${level}>`);
+            continue;
+        }
+
+        const quoteMatch = trimmed.match(/^>\s?(.*)$/);
+        if (quoteMatch) {
+            flushParagraph();
+            flushList();
+            quoteLines.push(quoteMatch[1]);
+            continue;
+        }
+
+        if (quoteLines.length) {
+            flushQuote();
+        }
+
+        const unorderedListMatch = trimmed.match(/^[-*]\s+(.+)$/);
+        if (unorderedListMatch) {
+            flushParagraph();
+            if (listType && listType !== "ul") {
+                flushList();
+            }
+            listType = "ul";
+            listItems.push(unorderedListMatch[1]);
+            continue;
+        }
+
+        const orderedListMatch = trimmed.match(/^\d+\.\s+(.+)$/);
+        if (orderedListMatch) {
+            flushParagraph();
+            if (listType && listType !== "ol") {
+                flushList();
+            }
+            listType = "ol";
+            listItems.push(orderedListMatch[1]);
+            continue;
+        }
+
+        if (listItems.length) {
+            flushList();
+        }
+
+        paragraphLines.push(trimmed);
+    }
+
+    flushAll();
+
+    return html.join("");
+}
+
 function addMessage(role, text) {
     if (text.ok) {
         text = text.data;
+    }
+    if (typeof text !== "string") {
+        text = JSON.stringify(text, null, 2);
     }
     const wrap = document.createElement("div");
     wrap.className = `msg ${role}`;
@@ -171,7 +346,12 @@ function addMessage(role, text) {
     <div class="role ${role}">${role}${role === "tool" ? '<span class="chevron">▶</span>' : ''}</div>
     <div class="bubble"></div>`;
     const bubble = wrap.querySelector(".bubble");
-    bubble.textContent = text;
+    if (role === "assistant") {
+        bubble.classList.add("markdown-content");
+        bubble.innerHTML = renderMarkdown(text);
+    } else {
+        bubble.textContent = text;
+    }
     bubble.onclick = function () {
         if (bubble.scrollHeight > 100 && role === "tool") {
             const expanded = bubble.style.maxHeight === 'none';
@@ -180,12 +360,14 @@ function addMessage(role, text) {
             wrap.querySelector(".chevron").style.transform = expanded ? '' : 'rotate(90deg)';
         }
     }
-    msgsEl.appendChild(wrap);
+    msgsEl.insertBefore(wrap, thinkingIndicatorEl);
     msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 
 function setStatus(text) {
     statusEl.textContent = text;
+    thinkingIndicatorEl.hidden = text !== "Thinking…";
+    msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 
 const worker = new Worker("./ifc_worker.js", { type: "module" });
@@ -291,7 +473,7 @@ async function runAgentTurn(userText) {
     const apiKey = apiKeyEl.value.trim();
     if (!apiKey) throw new Error("Missing API key");
 
-    const provider = PROVIDERS[providerEl.value];
+    const provider = PROVIDERS[getProviderValue()];
     const { chat } = provider.api;
     const baseURL = provider.baseUrlDefault ? baseUrlEl.value.trim() : undefined;
 

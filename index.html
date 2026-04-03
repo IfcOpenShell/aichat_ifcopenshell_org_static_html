@@ -14,12 +14,24 @@
         <section class="side">
             <div class="row">
                 <label>Provider</label>
-                <select id="provider" style="width: 100%;">
-                    <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic (Claude)</option>
-                    <option value="gemini">Gemini</option>
-                    <option value="openrouter">OpenRouter</option>
-                </select>
+                <div class="provider-tabs" role="radiogroup" aria-label="Provider">
+                    <label class="provider-tab">
+                        <input type="radio" name="provider" value="openai" checked />
+                        <span>OpenAI</span>
+                    </label>
+                    <label class="provider-tab">
+                        <input type="radio" name="provider" value="anthropic" />
+                        <span>Claude</span>
+                    </label>
+                    <label class="provider-tab">
+                        <input type="radio" name="provider" value="gemini" />
+                        <span>Gemini</span>
+                    </label>
+                    <label class="provider-tab">
+                        <input type="radio" name="provider" value="openrouter" />
+                        <span>OpenRouter</span>
+                    </label>
+                </div>
             </div>
 
             <div class="row">
@@ -84,10 +96,8 @@
 
         <section class="chat">
             <header>
+                <img src="https://ifcopenshell.org/assets/images/logo.png" style="float: left; padding: 10px 20px 10px 0; ">
                 <div class="row">
-
-                    <img src="https://ifcopenshell.org/assets/images/logo.png" style="float: left; padding: 10px 20px 10px 0; ">
-
                     <strong>IfcOpenShell AI Assistant</strong>
                 </div>
                 <div class="row">
@@ -96,7 +106,12 @@
                 </div>
             </header>
                 
-            <div class="msgs" id="msgs"></div>
+            <div class="msgs" id="msgs">
+                <div class="thinking-indicator" id="thinkingIndicator" hidden>
+                    <span class="spinner"></span>
+                    <span>thinking...</span>
+                </div>
+            </div>
             <div class="composer">
                 <div class="inner">
                     <textarea id="input" placeholder="Ask or instruct about the IFC model…"></textarea>
